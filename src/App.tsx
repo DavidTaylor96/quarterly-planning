@@ -1,18 +1,28 @@
 import { useState, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, Line, Area, AreaChart } from 'recharts';
-import { Calendar, Users, Clock, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Calendar, Users, Clock, TrendingUp, AlertTriangle, HelpCircle } from 'lucide-react';
 import './App.css';
+import TeamSummary from './components/TeamSummary';
+import TeamManagementPage from './pages/TeamManagementPage';
+import { TeamMember, Team, AdvancedCapacityInput, FeatureInput } from './types';
+import { calculateTeamEffectiveCapacity } from './utils/capacityCalculator';
+import { useTeamStore } from './store/teamStore';
 
 const CapacityPlanningDashboard = () => {
   const [selectedQuarter, setSelectedQuarter] = useState('Q3');
   const [capacity, setCapacity] = useState(40); // man-weeks for selected quarter
+  const [useTeamManagement, setUseTeamManagement] = useState(false);
+  const [showTeamManagementPage, setShowTeamManagementPage] = useState(false);
+  const [sprintLengthWeeks, setSprintLengthWeeks] = useState(2);
   
-  const [features, setFeatures] = useState({
+  const [features, setFeatures] = useState<FeatureInput>({
     xs: 5,
     s: 8,
     m: 4,
     l: 2
   });
+
+  const { members } = useTeamStore();
 
   type TShirtSize = 'xs' | 's' | 'm' | 'l';
 
@@ -28,8 +38,39 @@ const CapacityPlanningDashboard = () => {
   const hoursPerSprint = 80; // 2 weeks * 40 hours
 
   const calculations = useMemo(() => {
-    // Convert man-weeks to sprints capacity for selected quarter
-    const quarterCapacity = (capacity * 40) / hoursPerSprint;
+    let quarterCapacity: number;
+    
+    if (useTeamManagement && members.length > 0) {
+      // Calculate team-based capacity for the quarter
+      const quarterStartDate = new Date(2024, (parseInt(selectedQuarter.charAt(1)) - 1) * 3, 1);
+      const quarterEndDate = new Date(2024, parseInt(selectedQuarter.charAt(1)) * 3, 0);
+      
+      const team: Team = {
+        id: 'main-team',
+        name: 'Development Team',
+        members
+      };
+      
+      const advancedCapacityInput: AdvancedCapacityInput = {
+        team,
+        sprintLengthWeeks,
+        planningStartDate: quarterStartDate,
+        planningEndDate: quarterEndDate,
+      };
+      
+      const teamCapacities = calculateTeamEffectiveCapacity(advancedCapacityInput);
+      const teamCapacityPerSprint = teamCapacities.reduce(
+        (sum, member) => sum + member.effectiveCapacityPerSprint,
+        0
+      );
+      
+      // Convert to quarterly capacity (assuming 13 weeks per quarter)
+      const sprintsPerQuarter = 13 / sprintLengthWeeks;
+      quarterCapacity = teamCapacityPerSprint * sprintsPerQuarter;
+    } else {
+      // Use simple man-weeks calculation
+      quarterCapacity = (capacity * 40) / hoursPerSprint;
+    }
 
     // Calculate total effort needed (in sprints)
     const totalEffort = Object.entries(features).reduce((total, [size, count]) => {
@@ -108,7 +149,7 @@ const CapacityPlanningDashboard = () => {
       quarterlyData,
       remainingWork: Math.max(0, totalEffort - quarterCapacity)
     };
-  }, [capacity, features, selectedQuarter]);
+  }, [capacity, features, selectedQuarter, useTeamManagement, members, sprintLengthWeeks]);
 
   const handleFeatureChange = (size: TShirtSize, value: string) => {
     setFeatures(prev => ({
@@ -117,11 +158,43 @@ const CapacityPlanningDashboard = () => {
     }));
   };
 
+
+  if (showTeamManagementPage) {
+    return (
+      <TeamManagementPage
+        members={members}
+        onMembersChange={() => {}} // No longer needed as store is used directly
+        sprintLengthWeeks={sprintLengthWeeks}
+        planningStartDate={new Date(2024, (parseInt(selectedQuarter.charAt(1)) - 1) * 3, 1)}
+        planningEndDate={new Date(2024, parseInt(selectedQuarter.charAt(1)) * 3, 0)}
+        onBack={() => setShowTeamManagementPage(false)}
+      />
+    );
+  }
+
   return (
     <div className="dashboard-container">
       <div className="dashboard-header">
-        <h1>Quarterly Capacity Planning</h1>
-        <p>Plan your team's work for a specific quarter with t-shirt sized features</p>
+        <h1>Smart Capacity Planning Dashboard</h1>
+        <p>Advanced team-based capacity planning with roles, holidays, and experience factors</p>
+        
+        <div className="mode-toggle">
+          <span className="toggle-description">Planning Mode:</span>
+          <div className="toggle-switch">
+            <button
+              className={`toggle-option ${!useTeamManagement ? 'active' : ''}`}
+              onClick={() => setUseTeamManagement(false)}
+            >
+              Simple
+            </button>
+            <button
+              className={`toggle-option ${useTeamManagement ? 'active' : ''}`}
+              onClick={() => setUseTeamManagement(true)}
+            >
+              Team-based
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid-2">
@@ -129,7 +202,7 @@ const CapacityPlanningDashboard = () => {
         <div className="card">
           <div className="card-header">
             <Users className="card-icon" style={{color: '#3b82f6'}} />
-            <h2>Quarter Planning</h2>
+            <h2>Planning Configuration</h2>
           </div>
           
           <div className="input-group">
@@ -146,18 +219,41 @@ const CapacityPlanningDashboard = () => {
           </div>
 
           <div className="input-group">
-            <label>Available Capacity (Man-weeks)</label>
+            <label>Sprint Length (weeks)</label>
             <input
               type="number"
-              value={capacity}
-              onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
-              min="0"
-              placeholder="Enter man-weeks for this quarter"
+              value={sprintLengthWeeks}
+              onChange={(e) => setSprintLengthWeeks(parseInt(e.target.value) || 2)}
+              min="1"
+              max="4"
             />
-            <p className="capacity-info">
-              Equals {((capacity * 40) / hoursPerSprint).toFixed(1)} sprints capacity
-            </p>
           </div>
+
+          {!useTeamManagement && (
+            <div className="input-group">
+              <label className="input-label-with-help">
+                Available Capacity (Man-weeks)
+                <div className="help-tooltip">
+                  <HelpCircle size={16} className="help-icon" />
+                  <div className="tooltip-content">
+                    <strong>Base Capacity:</strong> The total available working time for your team in weeks. This represents the raw time available before considering holidays, experience levels, or role effectiveness.
+                    <br/><br/>
+                    <strong>Example:</strong> 5 people × 2 weeks = 10 man-weeks base capacity
+                  </div>
+                </div>
+              </label>
+              <input
+                type="number"
+                value={capacity}
+                onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
+                min="0"
+                placeholder="Enter man-weeks for this quarter"
+              />
+              <p className="capacity-info">
+                Equals {((capacity * 40) / hoursPerSprint).toFixed(1)} sprints capacity
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Features Input */}
@@ -181,6 +277,16 @@ const CapacityPlanningDashboard = () => {
           </div>
         </div>
       </div>
+
+      {/* Team Management */}
+      {useTeamManagement && (
+        <TeamSummary
+          members={members}
+          planningStartDate={new Date(2024, (parseInt(selectedQuarter.charAt(1)) - 1) * 3, 1)}
+          planningEndDate={new Date(2024, parseInt(selectedQuarter.charAt(1)) * 3, 0)}
+          onManageTeam={() => setShowTeamManagementPage(true)}
+        />
+      )}
 
       {/* Summary Cards */}
       <div className="grid-4">
